@@ -8,7 +8,8 @@ from qiskit import transpile
 from qiskit_aer import AerSimulator
 from qiskit_aer.noise import (NoiseModel, QuantumError, ReadoutError,
                               pauli_error, depolarizing_error, thermal_relaxation_error)
-import json
+import matplotlib.pyplot as plt
+import qiskit.providers.aer.noise as noise
 
 
 
@@ -113,61 +114,117 @@ def addthermalerror():
     return noise_thermal
 
     
-def runmcmrb(realqc, depth, backend_name="", thermalerror = True):
+def runmcmrb(realqc, mindepth, maxdepth, backend_name="", thermalerror=False, backenderror=False, depolerror=False):
     provider = IBMProvider()
     
     if realqc:
+        qclist = []
         backend = provider.get_backend(backend_name)
-        transpiledqc = transpile(makemcmrb(depth, realqc), backend)
-        job = backend.run(transpiledqc, shots=100)
+        for i in range(mindepth, maxdepth, 8):
+            transpiledqc = transpile(makemcmrb(i, realqc), backend)
+            qclist.append(transpiledqc)
+            #print(qclist)
+        print(backend.configuration().rep_delay_range)
+        job = backend.run(qclist, shots=100, rep_delay=0.0005)
         result = job.result()
+        print(result.get_counts())
+        return result.get_counts()
     else:
         if thermalerror:
-            backend = AerSimulator(noise_model=addthermalerror())
+            noise_model = addthermalerror()
+            backend = AerSimulator(noise_model=noise_model)
+        elif backenderror:
+            backend = provider.get_backend('ibm_nairobi')
+            noise_model = NoiseModel.from_backend(backend)
+            backend = AerSimulator(noise_model=noise_model)
+        elif depolerror:
+            meas_channel = noise.depolarizing_error(
+                1e-12, 1).tensor(noise.phase_damping_error(1.0))
+            noise_model = noise.NoiseModel()
+            noise_model.add_quantum_error(meas_channel, ['meas_u'], [
+                                          1, 0])
+            backend = AerSimulator(noise_model=noise_model)
         else:
             backend = AerSimulator()
-        transpiledqc = transpile(makemcmrb(depth, realqc), backend)
+        transpiledqc = transpile(makemcmrb(mindepth, realqc), backend)
         job = backend.run(transpiledqc, shots=100)
         result = job.result()
         probabilities = result.results[0].data.probabilities
-        print(f"probabilities {probabilities}")
+        return probabilities[0]
         
 
-def rundelayrb(realqc, depth, delay=0, backend_name="", thermalerror=True):
+def rundelayrb(realqc, mindepth, maxdepth, delay=0, backend_name="", thermalerror=False, backenderror = False, depolerror = False):
     provider = IBMProvider()
 
     if realqc:
+        qclist = []
         backend = provider.get_backend(backend_name)
         delay = backend.properties().to_dict().get('qubits')[0][-1]["value"]
-        transpiledqc = transpile(makedelayrb(delay, depth, realqc), backend)
-        job = backend.run(transpiledqc, shots=100)
+        for i in range(mindepth, maxdepth, 8):
+            transpiledqc = transpile(makedelayrb(delay, i, realqc), backend)
+            qclist.append(transpiledqc)
+            #print(qclist)
+        job = backend.run(qclist, shots=100)
         result = job.result()
-        try:
-            print(result.get_statevector())
-        except:
-            print("no statevector available")
-        with open("./delayrbresults.json", "w") as outfile:
-            json.dump(result.to_dict(), outfile)
         print(result.get_counts())
+        return result.get_counts()
 
     else:
         if thermalerror:
-            backend = AerSimulator(noise_model=addthermalerror())
+            noise_model = addthermalerror()
+            backend = AerSimulator(noise_model=noise_model)
+        elif backenderror:
+            backend = provider.get_backend('ibm_nairobi')
+            noise_model = NoiseModel.from_backend(backend)
+            backend = AerSimulator(noise_model=noise_model)
+        elif depolerror:
+            meas_channel = noise.depolarizing_error(
+                1e-12, 1).tensor(noise.phase_damping_error(1.0))
+            noise_model = noise.NoiseModel()
+            noise_model.add_quantum_error(meas_channel, ['meas_u'], [
+                                          1, 0])
+            backend = AerSimulator(noise_model=noise_model)
         else:
             backend = AerSimulator()
-        transpiledqc = transpile(makedelayrb(delay, depth, realqc), backend)
+        transpiledqc = transpile(makedelayrb(delay, mindepth, realqc), backend)
         job = backend.run(transpiledqc, shots=100)
         result = job.result()
+        
         #try:
         #print(result.get_statevector())
         #except:
          #   print("no statevector available")
         #with open("./delayrbresults.json", "w") as outfile:
            # json.dump(result.to_dict(), outfile)
-        print(result.to_dict())
-        print(result.get_counts())
+        #print(result.to_dict())
+        #print(result.get_counts())
         probabilities = result.results[0].data.probabilities
-        print(f"probabilities {probabilities}")
+        return probabilities[0]
 
 
-rundelayrb(False, 8)
+def expfunction_alpha(x, a, b, c):
+    return a * b**x + c
+
+#rundelaysimdata = {}
+#runmcmsimdata = {}
+#for i in range(2, 100, 5):
+#rundelaysimdata[i] = rundelayrb(False, 4, backenderror = True)
+#    runmcmsimdata[i] = runmcmrb(False, i, backenderror = True)
+#rundelaydata = {}
+#runmcmdata = {}
+runmcmrb(True, 50, 70, backend_name="ibm_nairobi")
+#rundelayrb(True, 3, 100, backend_name = "ibm_oslo") #TODO
+'''
+x = np.array(list(runmcmsimdata.keys()))
+y = np.array(list(runmcmsimdata.values()))
+params, covs = curve_fit(expfunction_alpha, x, y)
+a, b, c = params[0], params[1], params[2]
+yfit1 = a * b**x + c
+
+
+plt.scatter(rundelaysimdata.keys(), rundelaysimdata.values(), label = "delayrb")
+plt.scatter(runmcmsimdata.keys(), runmcmsimdata.values(), label = "mcmrb")
+plt.plot(x, yfit1)
+plt.legend()
+plt.show()
+'''
